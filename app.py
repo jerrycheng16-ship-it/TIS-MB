@@ -49,9 +49,10 @@ st.markdown("""
 st.markdown('<div class="main-title">TIS晨報 - 重要市場收盤表現</div>', unsafe_allow_html=True)
 
 # 側邊欄：系統設定與歷史日期篩選
-st.sidebar.header("⚙️ 系統設定與日期篩選")
+st.sidebar.header("⚙️️ 系統設定與日期篩選")
 selected_date = st.sidebar.date_input("選擇檢視收盤日期", datetime.now().date())
 
+# API 設定（僅保留給新聞摘要使用，表格抓資料不呼叫 AI）
 default_api_key = ""
 try:
     if "DASHSCOPE_API_KEY" in st.secrets:
@@ -60,7 +61,7 @@ except Exception:
     pass
 
 api_key = st.sidebar.text_input(
-    "阿里雲 / 中轉站 API Key", 
+    "阿里雲 / 中轉站 API Key (僅供新聞摘要使用)", 
     type="password", 
     value=default_api_key
 )
@@ -109,38 +110,16 @@ comm3 = {
     "VXN 指數": "^VXN", "美國10年公債殖利率": "^TNX"
 }
 
-def call_qwen_api(messages_list, key, b_url, chosen_model):
-    if not key:
-        return None, "尚未偵測到 API Key。"
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=key.strip(), base_url=b_url.strip())
-        models_to_try = [chosen_model, 'qwen-max', 'qwen-plus', 'qwen-turbo']
-        models_to_try = list(dict.fromkeys(models_to_try))
-        
-        for m_name in models_to_try:
-            try:
-                response = client.chat.completions.create(
-                    model=m_name, messages=messages_list, temperature=0.1, response_format={"type": "json_object"}
-                )
-                if response and response.choices:
-                    return response.choices[0].message.content, None
-            except Exception:
-                time.sleep(0.5)
-        return None, "所有模型嘗試皆失敗"
-    except Exception as e:
-        return None, str(e)
-
+# 純 Python 抓取函數（不依賴 AI，若 ^TWOII 抓不到則給予 N/A 供使用者手動填寫）
 @st.cache_data(ttl=3600)
-def fetch_market_data_robust(tickers_dict, target_date_str, api_key, base_url, model):
+def fetch_market_data_pure(tickers_dict, target_date_str):
     data = []
     target_dt = pd.to_datetime(target_date_str)
     start_dt = target_dt - timedelta(days=20)
     end_dt = target_dt + timedelta(days=1)
     
-    missing_items = []
-    
     for name, ticker in tickers_dict.items():
+        val_close, val_change, val_pct = "N/A", "N/A", "N/A"
         try:
             t = yf.Ticker(ticker)
             hist = t.history(start=start_dt.strftime('%Y-%m-%d'), end=end_dt.strftime('%Y-%m-%d'))
@@ -157,92 +136,58 @@ def fetch_market_data_robust(tickers_dict, target_date_str, api_key, base_url, m
                     change = close - prev
                     pct_change = (change / prev) * 100 if prev != 0 else 0.0
                     
-                    data.append({
-                        "指數/商品": name,
-                        "收盤價": f"{close:,.2f}",
-                        "變動": f"{change:+,.2f}",
-                        "(%)": f"{pct_change:+.2f}%"
-                    })
-                    continue
-            missing_items.append(name)
+                    val_close = f"{close:,.2f}"
+                    val_change = f"{change:+,.2f}"
+                    val_pct = f"{pct_change:+.2f}%"
         except Exception:
-            missing_items.append(name)
+            pass
             
-    if missing_items and api_key:
-        prompt = f"""
-        你是一個專業的金融數據分析師。請根據全球與台灣股市（包含加權指數、櫃買指數、0050、0051等）在日期【{target_date_str}】的真實歷史收盤行情，提供以下缺失標的的精準收盤價、漲跌變動與漲跌幅百分比：
-        缺失標的清單：{json.dumps(missing_items, ensure_ascii=False)}
-        
-        請務必以 JSON 格式回傳，格式範例：
-        {{
-          "標的名稱": {{"close": "123.45", "change": "+1.23", "pct": "+1.00%"}}
-        }}
-        """
-        messages = [{'role': 'system', 'content': '你是一個精通全球股市與台股行情的金融AI。'}, {'role': 'user', 'content': prompt}]
-        res_str, _ = call_qwen_api(messages, api_key, base_url, model)
-        if res_str:
-            try:
-                ai_data = json.loads(res_str)
-                for name in missing_items:
-                    if name in ai_data:
-                        val = ai_data[name]
-                        data.append({
-                            "指數/商品": name,
-                            "收盤價": val.get("close", "N/A"),
-                            "變動": val.get("change", "N/A"),
-                            "(%)": val.get("pct", "N/A")
-                        })
-                    else:
-                        data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
-            except Exception:
-                for name in missing_items:
-                    data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
-        else:
-            for name in missing_items:
-                data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
-                
-    ordered_data = []
-    data_dict = {item["指數/商品"]: item for item in data}
-    for name in tickers_dict.keys():
-        if name in data_dict and data_dict[name]["收盤價"] not in ["nan", "NaN", "N/A", None]:
-            ordered_data.append(data_dict[name])
-        else:
-            ordered_data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
-            
-    return pd.DataFrame(ordered_data)
+        data.append({
+            "指數/商品": name,
+            "收盤價": val_close,
+            "變動": val_change,
+            "(%)": val_pct
+        })
+    return pd.DataFrame(data)
 
-st.markdown(f'<div class="section-header">全球主要股市與商品收盤表現（基準日：{selected_date}）</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="section-header">全球主要股市與商品收盤表現（基準日：{selected_date}）- 支援下方表格直接編輯校正</div>', unsafe_allow_html=True)
 col_i1, col_i2, col_i3 = st.columns(3)
 
 with col_i1:
     st.markdown("**美、歐股市**")
-    st.dataframe(fetch_market_data_robust(group1_indices, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+    df1 = fetch_market_data_pure(group1_indices, str(selected_date))
+    edited_df1 = st.data_editor(df1, hide_index=True, key="edit_g1")
 
 with col_i2:
     st.markdown("**亞洲股市**")
-    st.dataframe(fetch_market_data_robust(group2_indices, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+    df2 = fetch_market_data_pure(group2_indices, str(selected_date))
+    edited_df2 = st.data_editor(df2, hide_index=True, key="edit_g2")
 
 with col_i3:
     st.markdown("**台灣與國際指數**")
-    st.dataframe(fetch_market_data_robust(group3_indices, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+    df3 = fetch_market_data_pure(group3_indices, str(selected_date))
+    edited_df3 = st.data_editor(df3, hide_index=True, key="edit_g3")
 
 st.markdown('<div class="section-header">大宗商品、匯率與債市表現</div>', unsafe_allow_html=True)
 col_c1, col_c2, col_c3 = st.columns(3)
 
 with col_c1:
     st.markdown("**金屬能源 (Commodity)**")
-    st.dataframe(fetch_market_data_robust(comm1, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+    df_c1 = fetch_market_data_pure(comm1, str(selected_date))
+    edited_df_c1 = st.data_editor(df_c1, hide_index=True, key="edit_c1")
 
 with col_c2:
     st.markdown("**農作商品 (Commodity)**")
-    st.dataframe(fetch_market_data_robust(comm2, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+    df_c2 = fetch_market_data_pure(comm2, str(selected_date))
+    edited_df_c2 = st.data_editor(df_c2, hide_index=True, key="edit_c2")
 
 with col_c3:
     st.markdown("**其他商品與指標**")
-    st.dataframe(fetch_market_data_robust(comm3, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+    df_c3 = fetch_market_data_pure(comm3, str(selected_date))
+    edited_df_c3 = st.data_editor(df_c3, hide_index=True, key="edit_c3")
 
 # =========================================================
-# 🔍 除錯專用表格：櫃買指數、0050、0051 近 10 天歷史收盤價（強固防護版）
+# 🔍 除錯專用表格：櫃買指數、0050、0051 近 10 天歷史收盤價
 # =========================================================
 st.markdown("---")
 st.markdown('<div class="section-header">🔍 除錯專用：櫃買指數、0050、0051 近 10 天歷史收盤價檢視</div>', unsafe_allow_html=True)
@@ -269,7 +214,6 @@ for label, t_code in debug_tickers.items():
     except Exception:
         all_debug_data[label] = pd.Series(dtype=float)
 
-# 強制合併，即使某個欄位完全是空的也不會報錯或隱藏表格
 debug_combined_df = pd.DataFrame(all_debug_data)
 if not debug_combined_df.empty:
     debug_combined_df = debug_combined_df.sort_index(ascending=False)
@@ -280,7 +224,25 @@ else:
 st.markdown("---")
 st.markdown(f'<div class="main-title">TIS晨報 - 新聞摘要 ({selected_date})</div>', unsafe_allow_html=True)
 
+# 新聞摘要用的 AI 呼叫（若您目前不想用 AI，可自行切換或暫時略過）
+def call_qwen_api(messages_list, key, b_url, chosen_model):
+    if not key:
+        return None, "尚未偵測到 API Key。"
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=key.strip(), base_url=b_url.strip())
+        response = client.chat.completions.create(
+            model=chosen_model, messages=messages_list, temperature=0.3, response_format={"type": "json_object"}
+        )
+        if response and response.choices:
+            return response.choices[0].message.content, None
+    except Exception as e:
+        return None, str(e)
+    return None, "未知錯誤"
+
 def generate_ai_news_summary(api_key, b_url, model):
+    if not api_key:
+        return {"美股焦點": "⚠️ 尚未設定 API Key", "債市焦點": "---", "能源盤後": "---", "貴金屬盤後": "---", "紐約匯市": "---", "台幣焦點": "---"}
     prompt = f"""
     請模擬專業華爾街金融分析師，依據路透社(Reuters)、Yahoo Finance與TradingView的最新市場動態，產出日期為 {selected_date} 的專業「TIS晨報-新聞摘要」。
     請嚴格分成以下六大板塊，以專業流暢的繁體中文撰寫：
