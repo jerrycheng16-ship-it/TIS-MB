@@ -144,6 +144,7 @@ def fetch_market_data_robust(tickers_dict, target_date_str, api_key, base_url, m
         try:
             t = yf.Ticker(ticker)
             hist = t.history(start=start_dt.strftime('%Y-%m-%d'), end=end_dt.strftime('%Y-%m-%d'))
+            
             if not hist.empty:
                 if hist.index.tz is not None:
                     hist.index = hist.index.tz_localize(None)
@@ -241,7 +242,7 @@ with col_c3:
     st.dataframe(fetch_market_data_robust(comm3, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
 
 # =========================================================
-# 🔍 額外新增：台股關鍵標的（櫃買指數、0050、0051）近 10 天除錯專用表格
+# 🔍 除錯專用表格：櫃買指數、0050、0051 近 10 天歷史收盤價（純指數與原代號）
 # =========================================================
 st.markdown("---")
 st.markdown('<div class="section-header">🔍 除錯專用：櫃買指數、0050、0051 近 10 天歷史收盤價檢視</div>', unsafe_allow_html=True)
@@ -272,7 +273,7 @@ if debug_dfs:
     combined_debug_df = pd.concat(debug_dfs, axis=1).sort_index(ascending=False)
     st.dataframe(combined_debug_df, use_container_width=True)
 else:
-    st.warning("⚠️ 目前無法取得除錯標的的歷史資料，請檢查網路連線或代號。")
+    st.warning("⚠️ 目前無法取得除錯標的的歷史資料。")
 
 st.markdown("---")
 st.markdown(f'<div class="main-title">TIS晨報 - 新聞摘要 ({selected_date})</div>', unsafe_allow_html=True)
