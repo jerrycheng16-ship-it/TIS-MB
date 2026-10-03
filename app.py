@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 自訂 CSS 樣式，精確對齊專業財經終端機與圖片排版
+# 自訂 CSS 樣式
 st.markdown("""
     <style>
     .main-title {
@@ -47,14 +47,20 @@ st.markdown("""
 
 st.markdown('<div class="main-title">TIS晨報 - 重要市場收盤表現</div>', unsafe_allow_html=True)
 
-# 側邊欄：API 設定與定時更新資訊
+# 側邊欄：API 設定（優先從 st.secrets 讀取）
 st.sidebar.header("⚙️ 系統設定")
 
-# 💡 您可以直接在此處引號內填入您的阿里雲 DashScope API Key
+default_api_key = ""
+try:
+    if "DASHSCOPE_API_KEY" in st.secrets:
+        default_api_key = st.secrets["DASHSCOPE_API_KEY"]
+except Exception:
+    pass
+
 api_key = st.sidebar.text_input(
-    "", 
+    "阿里雲 API Key (DashScope)", 
     type="password", 
-    value="sk-ws-H.DHYEEDI.1jmZ.MEQCIFdnlkm9WsuFQifkLXtmeoO4Ec_vIQPXrvQ2sudBuQZuAiBgbKJn3u8t42wgtb5cJxGe4LMSHzCr3eR67pLdQWxqiw"
+    value=default_api_key
 )
 
 model_choice = st.sidebar.selectbox("選擇阿里雲模型", ["qwen-max", "qwen-plus", "qwen-turbo"])
@@ -63,7 +69,7 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### ⏰ 自動更新機制")
 st.sidebar.write("系統設定於 **每天早上 07:00** 自動重新整理並呼叫 AI 生成最新晨報摘要。")
 
-# 依照圖片精確對應的標的清單
+# 標的清單定義
 group1_indices = {
     "道瓊工業指數": "^DJI",
     "那斯達克指數": "^IXIC",
@@ -148,43 +154,36 @@ def fetch_market_data(tickers_dict):
             data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
     return pd.DataFrame(data)
 
-# 上半部：三大指數區塊並排（美國/歐洲、亞洲、台灣/國際指數）
+# 市場表格呈現
 st.markdown('<div class="section-header">全球主要股市收盤表現</div>', unsafe_allow_html=True)
 col_i1, col_i2, col_i3 = st.columns(3)
 
 with col_i1:
     st.markdown("**美、歐股市**")
-    df_i1 = fetch_market_data(group1_indices)
-    st.dataframe(df_i1, use_container_width=True, hide_index=True)
+    st.dataframe(fetch_market_data(group1_indices), use_container_width=True, hide_index=True)
 
 with col_i2:
     st.markdown("**亞洲股市**")
-    df_i2 = fetch_market_data(group2_indices)
-    st.dataframe(df_i2, use_container_width=True, hide_index=True)
+    st.dataframe(fetch_market_data(group2_indices), use_container_width=True, hide_index=True)
 
 with col_i3:
     st.markdown("**台灣與國際指數**")
-    df_i3 = fetch_market_data(group3_indices)
-    st.dataframe(df_i3, use_container_width=True, hide_index=True)
+    st.dataframe(fetch_market_data(group3_indices), use_container_width=True, hide_index=True)
 
-# 下半部：三大商品區塊並排（金屬能源、農作商品、其他商品）
 st.markdown('<div class="section-header">大宗商品、匯率與債市表現</div>', unsafe_allow_html=True)
 col_c1, col_c2, col_c3 = st.columns(3)
 
 with col_c1:
     st.markdown("**金屬能源 (Commodity)**")
-    df_c1 = fetch_market_data(comm1)
-    st.dataframe(df_c1, use_container_width=True, hide_index=True)
+    st.dataframe(fetch_market_data(comm1), use_container_width=True, hide_index=True)
 
 with col_c2:
     st.markdown("**農作商品 (Commodity)**")
-    df_c2 = fetch_market_data(comm2)
-    st.dataframe(df_c2, use_container_width=True, hide_index=True)
+    st.dataframe(fetch_market_data(comm2), use_container_width=True, hide_index=True)
 
 with col_c3:
     st.markdown("**其他商品與指標**")
-    df_c3 = fetch_market_data(comm3)
-    st.dataframe(df_c3, use_container_width=True, hide_index=True)
+    st.dataframe(fetch_market_data(comm3), use_container_width=True, hide_index=True)
 
 st.markdown("---")
 st.markdown('<div class="main-title">TIS晨報 - 新聞摘要 (基於路透、Yahoo財經、TradingView與阿里雲 Qwen AI)</div>', unsafe_allow_html=True)
@@ -193,12 +192,12 @@ st.markdown('<div class="main-title">TIS晨報 - 新聞摘要 (基於路透、Ya
 def generate_ai_news_summary(api_key, model):
     if not api_key:
         return {
-            "美股焦點": "⚠️ 請在左側邊欄（或程式碼中）填入您的阿里雲 API Key (DashScope)，以自動生成新聞摘要。",
-            "債市焦點": "請輸入 API Key 後點擊更新。",
-            "能源盤後": "請輸入 API Key 後點擊更新。",
-            "貴金屬盤後": "請輸入 API Key 後點擊更新。",
-            "紐約匯市": "請輸入 API Key 後點擊更新。",
-            "台幣焦點": "請輸入 API Key 後點擊更新。"
+            "美股焦點": "⚠️ 尚未偵測到 API Key。請確認已設定於 secrets.toml 或是側邊欄中。",
+            "債市焦點": "請設定 API Key。",
+            "能源盤後": "---",
+            "貴金屬盤後": "---",
+            "紐約匯市": "---",
+            "台幣焦點": "---"
         }
     
     try:
@@ -210,7 +209,7 @@ def generate_ai_news_summary(api_key, model):
         
         prompt = """
         請模擬專業華爾街金融分析師，依據路透社(Reuters)、Yahoo Finance與TradingView的最新市場動態與總體經濟趨勢，產出今日專業的「TIS晨報-新聞摘要」。
-        請嚴格分成以下六大板塊，以結構化、專業流暢的繁體中文撰寫：
+        請嚴格分成以下六大板塊，針對當天市場標的與相關資訊進行深度結構化整理，以專業流暢的繁體中文撰寫：
         1. 美股焦點
         2. 債市焦點
         3. 能源盤後
@@ -242,8 +241,8 @@ def generate_ai_news_summary(api_key, model):
         }
     except Exception as e:
         return {
-            "美股焦點": f"❌ API 呼叫發生錯誤: {str(e)}\n\n💡 請確認輸入的是正確的「阿里雲 DashScope API Key」（非 OpenAI Key），且帳戶餘額充足。",
-            "債市焦點": "請確認 API Key 是否有效。",
+            "美股焦點": f"❌ API 呼叫發生錯誤: {str(e)}\n\n💡 提示：請確認您的阿里雲 API Key 是否正確且帳戶餘額充足。",
+            "債市焦點": "請檢查 API 設定。",
             "能源盤後": "---",
             "貴金屬盤後": "---",
             "紐約匯市": "---",
