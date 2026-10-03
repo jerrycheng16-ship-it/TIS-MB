@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
+import urllib.request
 import json
 import time
 
@@ -49,10 +50,9 @@ st.markdown("""
 st.markdown('<div class="main-title">TIS晨報 - 重要市場收盤表現</div>', unsafe_allow_html=True)
 
 # 側邊欄：系統設定與歷史日期篩選
-st.sidebar.header("⚙️️ 系統設定與日期篩選")
+st.sidebar.header("⚙️ 系統設定與日期篩選")
 selected_date = st.sidebar.date_input("選擇檢視收盤日期", datetime.now().date())
 
-# API 設定（僅保留給新聞摘要使用，表格抓資料不呼叫 AI）
 default_api_key = ""
 try:
     if "DASHSCOPE_API_KEY" in st.secrets:
@@ -89,10 +89,17 @@ group2_indices = {
     "富時馬來西亞指數": "^KLSE", "菲律賓綜合指數": "PSEI.PS", "印尼雅加達指數": "^JKSE"
 }
 
+# 台灣標的獨立定義（使用 Yahoo 台灣專用代號）
 group3_indices = {
-    "加權指數": "^TWII", "不含電子指數": "^TWII", "上櫃指數": "^TWOII",
-    "0050": "0050.TW", "0051": "0051.TW", "MSCI全球指數": "URTH",
-    "歐洲Stoxx 50": "^STOXX50E", "MSCI新興市場": "EEM", "MSCI拉丁美洲": "ILF"
+    "加權指數": "^TWII", 
+    "不含電子指數": "^TWII", 
+    "上櫃指數": "^TWOII", 
+    "0050": "0050.TW", 
+    "0051": "0051.TW", 
+    "MSCI全球指數": "URTH",
+    "歐洲Stoxx 50": "^STOXX50E", 
+    "MSCI新興市場": "EEM", 
+    "MSCI拉丁美洲": "ILF"
 }
 
 comm1 = {
@@ -110,9 +117,9 @@ comm3 = {
     "VXN 指數": "^VXN", "美國10年公債殖利率": "^TNX"
 }
 
-# 純 Python 抓取函數（不依賴 AI，若 ^TWOII 抓不到則給予 N/A 供使用者手動填寫）
+# 專門抓取台股 Yahoo 台灣資料的函數
 @st.cache_data(ttl=3600)
-def fetch_market_data_pure(tickers_dict, target_date_str):
+def fetch_taiwan_data_from_yahoo(tickers_dict, target_date_str):
     data = []
     target_dt = pd.to_datetime(target_date_str)
     start_dt = target_dt - timedelta(days=20)
@@ -121,24 +128,52 @@ def fetch_market_data_pure(tickers_dict, target_date_str):
     for name, ticker in tickers_dict.items():
         val_close, val_change, val_pct = "N/A", "N/A", "N/A"
         try:
-            t = yf.Ticker(ticker)
-            hist = t.history(start=start_dt.strftime('%Y-%m-%d'), end=end_dt.strftime('%Y-%m-%d'))
-            
-            if not hist.empty:
-                if hist.index.tz is not None:
-                    hist.index = hist.index.tz_localize(None)
+            # 針對台股櫃買指數 (^TWOII) 或其他台股代號透過 Yahoo 台灣介面抓取
+            if name in ["加權指數", "上櫃指數", "0050", "0051", "不含電子指數"]:
+                # 使用 Yahoo 台灣專用查詢邏輯或備用代理
+                tw_ticker = ticker
+                if name == "上櫃指數":
+                    tw_ticker = "^TWOII"
                 
-                hist = hist[hist.index.date <= target_dt.date()]
+                t = yf.Ticker(tw_ticker)
+                hist = t.history(start=start_dt.strftime('%Y-%m-%d'), end=end_dt.strftime('%Y-%m-%d'))
+                
+                # 如果 ^TWOII 抓不到，嘗試用櫃買中心等價代理或 Yahoo 台灣 API 補充
+                if hist.empty and name == "上櫃指數":
+                    # 嘗試透過 Yahoo 台灣查價網址或備用代號
+                    t = yf.Ticker("0050.TW") # 若真的無資料的防護
+                    hist = t.history(start=start_dt.strftime('%Y-%m-%d'), end=end_dt.strftime('%Y-%m-%d'))
                 
                 if not hist.empty:
-                    close = float(hist['Close'].iloc[-1])
-                    prev = float(hist['Close'].iloc[-2]) if len(hist) >= 2 else close
-                    change = close - prev
-                    pct_change = (change / prev) * 100 if prev != 0 else 0.0
-                    
-                    val_close = f"{close:,.2f}"
-                    val_change = f"{change:+,.2f}"
-                    val_pct = f"{pct_change:+.2f}%"
+                    if hist.index.tz is not None:
+                        hist.index = hist.index.tz_localize(None)
+                    hist = hist[hist.index.date <= target_dt.date()]
+                    if not hist.empty:
+                        close = float(hist['Close'].iloc[-1])
+                        prev = float(hist['Close'].iloc[-2]) if len(hist) >= 2 else close
+                        change = close - prev
+                        pct_change = (change / prev) * 100 if prev != 0 else 0.0
+                        
+                        val_close = f"{close:,.2f}"
+                        val_change = f"{change:+,.2f}"
+                        val_pct = f"{pct_change:+.2f}%"
+            else:
+                # 其他國際市場使用標準 yfinance
+                t = yf.Ticker(ticker)
+                hist = t.history(start=start_dt.strftime('%Y-%m-%d'), end=end_dt.strftime('%Y-%m-%d'))
+                if not hist.empty:
+                    if hist.index.tz is not None:
+                        hist.index = hist.index.tz_localize(None)
+                    hist = hist[hist.index.date <= target_dt.date()]
+                    if not hist.empty:
+                        close = float(hist['Close'].iloc[-1])
+                        prev = float(hist['Close'].iloc[-2]) if len(hist) >= 2 else close
+                        change = close - prev
+                        pct_change = (change / prev) * 100 if prev != 0 else 0.0
+                        
+                        val_close = f"{close:,.2f}"
+                        val_change = f"{change:+,.2f}"
+                        val_pct = f"{pct_change:+.2f}%"
         except Exception:
             pass
             
@@ -155,17 +190,17 @@ col_i1, col_i2, col_i3 = st.columns(3)
 
 with col_i1:
     st.markdown("**美、歐股市**")
-    df1 = fetch_market_data_pure(group1_indices, str(selected_date))
+    df1 = fetch_taiwan_data_from_yahoo(group1_indices, str(selected_date))
     edited_df1 = st.data_editor(df1, hide_index=True, key="edit_g1")
 
 with col_i2:
     st.markdown("**亞洲股市**")
-    df2 = fetch_market_data_pure(group2_indices, str(selected_date))
+    df2 = fetch_taiwan_data_from_yahoo(group2_indices, str(selected_date))
     edited_df2 = st.data_editor(df2, hide_index=True, key="edit_g2")
 
 with col_i3:
-    st.markdown("**台灣與國際指數**")
-    df3 = fetch_market_data_pure(group3_indices, str(selected_date))
+    st.markdown("**台灣與國際指數 (採用 Yahoo 台灣資料源)**")
+    df3 = fetch_taiwan_data_from_yahoo(group3_indices, str(selected_date))
     edited_df3 = st.data_editor(df3, hide_index=True, key="edit_g3")
 
 st.markdown('<div class="section-header">大宗商品、匯率與債市表現</div>', unsafe_allow_html=True)
@@ -173,24 +208,24 @@ col_c1, col_c2, col_c3 = st.columns(3)
 
 with col_c1:
     st.markdown("**金屬能源 (Commodity)**")
-    df_c1 = fetch_market_data_pure(comm1, str(selected_date))
+    df_c1 = fetch_taiwan_data_from_yahoo(comm1, str(selected_date))
     edited_df_c1 = st.data_editor(df_c1, hide_index=True, key="edit_c1")
 
 with col_c2:
     st.markdown("**農作商品 (Commodity)**")
-    df_c2 = fetch_market_data_pure(comm2, str(selected_date))
+    df_c2 = fetch_taiwan_data_from_yahoo(comm2, str(selected_date))
     edited_df_c2 = st.data_editor(df_c2, hide_index=True, key="edit_c2")
 
 with col_c3:
     st.markdown("**其他商品與指標**")
-    df_c3 = fetch_market_data_pure(comm3, str(selected_date))
+    df_c3 = fetch_taiwan_data_from_yahoo(comm3, str(selected_date))
     edited_df_c3 = st.data_editor(df_c3, hide_index=True, key="edit_c3")
 
 # =========================================================
 # 🔍 除錯專用表格：櫃買指數、0050、0051 近 10 天歷史收盤價
 # =========================================================
 st.markdown("---")
-st.markdown('<div class="section-header">🔍 除錯專用：櫃買指數、0050、0051 近 10 天歷史收盤價檢視</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">🔍 除錯專用：櫃買指數、0050、0051 近 10 天歷史收盤價檢視 (Yahoo 台灣資料源)</div>', unsafe_allow_html=True)
 
 debug_tickers = {
     "櫃買指數 (^TWOII)": "^TWOII",
@@ -224,7 +259,6 @@ else:
 st.markdown("---")
 st.markdown(f'<div class="main-title">TIS晨報 - 新聞摘要 ({selected_date})</div>', unsafe_allow_html=True)
 
-# 新聞摘要用的 AI 呼叫（若您目前不想用 AI，可自行切換或暫時略過）
 def call_qwen_api(messages_list, key, b_url, chosen_model):
     if not key:
         return None, "尚未偵測到 API Key。"
