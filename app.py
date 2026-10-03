@@ -52,9 +52,9 @@ st.sidebar.header("⚙️ 系統設定")
 
 # 💡 您可以直接在此處引號內填入您的阿里雲 DashScope API Key
 api_key = st.sidebar.text_input(
-    "sk-ws-H.DHYEEDI.1jmZ.MEQCIFdnlkm9WsuFQifkLXtmeoO4Ec_vIQPXrvQ2sudBuQZuAiBgbKJn3u8t42wgtb5cJxGe4LMSHzCr3eR67pLdQWxqiw", 
+    "", 
     type="password", 
-    value=""
+    value="sk-ws-H.DHYEEDI.1jmZ.MEQCIFdnlkm9WsuFQifkLXtmeoO4Ec_vIQPXrvQ2sudBuQZuAiBgbKJn3u8t42wgtb5cJxGe4LMSHzCr3eR67pLdQWxqiw"
 )
 
 model_choice = st.sidebar.selectbox("選擇阿里雲模型", ["qwen-max", "qwen-plus", "qwen-turbo"])
