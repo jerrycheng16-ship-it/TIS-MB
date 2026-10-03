@@ -50,8 +50,6 @@ st.markdown('<div class="main-title">TIS晨報 - 重要市場收盤表現</div>'
 
 # 側邊欄：系統設定與歷史日期篩選
 st.sidebar.header("⚙️ 系統設定與日期篩選")
-
-# 日期選擇器：可自由選擇要看的歷史日期
 selected_date = st.sidebar.date_input("選擇檢視收盤日期", datetime.now().date())
 
 default_api_key = ""
@@ -77,137 +75,40 @@ except Exception:
 base_url_input = st.sidebar.text_input("API Base URL", value=default_base_url)
 model_choice = st.sidebar.selectbox("選擇大模型", ["qwen-max", "qwen-plus", "qwen-turbo"])
 
-# 標的清單定義（已針對 Yahoo Finance 進行高穩定度代號優化）
+# 定義標的清單
 group1_indices = {
-    "道瓊工業指數": "^DJI",
-    "那斯達克指數": "^IXIC",
-    "標普500指數": "^GSPC",
-    "費城半導體指數": "^SOX",
-    "羅素2000指數": "^RUT",
-    "英國FTSE 100": "^FTSE",
-    "德國DAX指數": "^GDAXI",
-    "法國CAC指數": "^FCHI",
-    "道瓊歐洲600指數": "^STOXX"
+    "道瓊工業指數": "^DJI", "那斯達克指數": "^IXIC", "標普500指數": "^GSPC",
+    "費城半導體指數": "^SOX", "羅素2000指數": "^RUT", "英國FTSE 100": "^FTSE",
+    "德國DAX指數": "^GDAXI", "法國CAC指數": "^FCHI", "道瓊歐洲600指數": "^STOXX"
 }
 
 group2_indices = {
-    "日經225指數": "^N225",
-    "南韓KOSPI指數": "^KS11",
-    "恆生指數": "^HSI",
-    "上證指數": "000001.SS",
-    "新加坡STI指數": "^STI",
-    "泰國曼谷SET指數": "^SET.BK",
-    "富時馬來西亞指數": "^KLSE",
-    "菲律賓綜合指數": "PSEI.PS",
-    "印尼雅加達指數": "^JKSE"
+    "日經225指數": "^N225", "南韓KOSPI指數": "^KS11", "恆生指數": "^HSI",
+    "上證指數": "000001.SS", "新加坡STI指數": "^STI", "泰國曼谷SET指數": "^SET.BK",
+    "富時馬來西亞指數": "^KLSE", "菲律賓綜合指數": "PSEI.PS", "印尼雅加達指數": "^JKSE"
 }
 
 group3_indices = {
-    "加權指數": "^TWII",
-    "不含電子指數": "^TWII",
-    "上櫃指數": "^TWOII",
-    "0050": "0050.TW",
-    "0051": "0051.TW",
-    "MSCI全球指數": "URTH",
-    "歐洲Stoxx 50": "^STOXX50E",
-    "MSCI新興市場": "EEM",
-    "MSCI拉丁美洲": "ILF"
+    "加權指數": "^TWII", "不含電子指數": "^TWII", "上櫃指數": "^TWOII",
+    "0050": "0050.TW", "0051": "0051.TW", "MSCI全球指數": "URTH",
+    "歐洲Stoxx 50": "^STOXX50E", "MSCI新興市場": "EEM", "MSCI拉丁美洲": "ILF"
 }
 
 comm1 = {
-    "Crude Oil 原油": "CL=F",
-    "Natural Gas 天然氣": "NG=F",
-    "Gold 黃金": "GC=F",
-    "Silver 白銀": "SI=F",
-    "Copper 銅": "HG=F"
+    "Crude Oil 原油": "CL=F", "Natural Gas 天然氣": "NG=F", "Gold 黃金": "GC=F",
+    "Silver 白銀": "SI=F", "Copper 銅": "HG=F"
 }
 
 comm2 = {
-    "CRB 商品指數": "DBC",
-    "Corn 玉米": "ZC=F",
-    "Wheat 小麥": "ZW=F",
-    "Soybean 黃豆": "ZS=F",
-    "Cotton 棉花": "CT=F"
+    "CRB 商品指數": "DBC", "Corn 玉米": "ZC=F", "Wheat 小麥": "ZW=F",
+    "Soybean 黃豆": "ZS=F", "Cotton 棉花": "CT=F"
 }
 
 comm3 = {
-    "DXY 美元指數": "DX-Y.NYB",
-    "BDI運價指數": "BDRY",
-    "VIX 指數": "^VIX",
-    "VXN 指數": "^VXN",
-    "美國10年公債殖利率": "^TNX"
+    "DXY 美元指數": "DX-Y.NYB", "BDI運價指數": "BDRY", "VIX 指數": "^VIX",
+    "VXN 指數": "^VXN", "美國10年公債殖利率": "^TNX"
 }
 
-@st.cache_data(ttl=3600)
-def fetch_market_data_by_date(tickers_dict, target_date):
-    data = []
-    # 往前抓取 15 天以確保跨過週末、連續假期或休市空窗期
-    start_dt = pd.to_datetime(target_date) - timedelta(days=15)
-    end_dt = pd.to_datetime(target_date) + timedelta(days=1)
-    
-    for name, ticker in tickers_dict.items():
-        try:
-            t = yf.Ticker(ticker)
-            hist = t.history(start=start_dt.strftime('%Y-%m-%d'), end=end_dt.strftime('%Y-%m-%d'))
-            
-            if not hist.empty:
-                # 過濾小於等於目標日期的資料
-                hist = hist[hist.index.date <= target_date]
-                if not hist.empty:
-                    close = hist['Close'].iloc[-1]
-                    prev = hist['Close'].iloc[-2] if len(hist) >= 2 else close
-                    change = close - prev
-                    pct_change = (change / prev) * 100 if prev != 0 else 0.0
-                    
-                    data.append({
-                        "指數/商品": name,
-                        "收盤價": f"{close:,.2f}",
-                        "變動": f"{change:+,.2f}",
-                        "(%)": f"{pct_change:+.2f}%"
-                    })
-                    continue
-            
-            # 若直接抓取無果，嘗試用備用方法或給予預設數值避免 nan
-            data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
-        except Exception:
-            data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
-    return pd.DataFrame(data)
-
-# 顯示市場收盤表格
-st.markdown(f'<div class="section-header">全球主要股市收盤表現（基準日：{selected_date}）</div>', unsafe_allow_html=True)
-col_i1, col_i2, col_i3 = st.columns(3)
-
-with col_i1:
-    st.markdown("**美、歐股市**")
-    st.dataframe(fetch_market_data_by_date(group1_indices, selected_date), use_container_width=True, hide_index=True)
-
-with col_i2:
-    st.markdown("**亞洲股市**")
-    st.dataframe(fetch_market_data_by_date(group2_indices, selected_date), use_container_width=True, hide_index=True)
-
-with col_i3:
-    st.markdown("**台灣與國際指數**")
-    st.dataframe(fetch_market_data_by_date(group3_indices, selected_date), use_container_width=True, hide_index=True)
-
-st.markdown('<div class="section-header">大宗商品、匯率與債市表現</div>', unsafe_allow_html=True)
-col_c1, col_c2, col_c3 = st.columns(3)
-
-with col_c1:
-    st.markdown("**金屬能源 (Commodity)**")
-    st.dataframe(fetch_market_data_by_date(comm1, selected_date), use_container_width=True, hide_index=True)
-
-with col_c2:
-    st.markdown("**農作商品 (Commodity)**")
-    st.dataframe(fetch_market_data_by_date(comm2, selected_date), use_container_width=True, hide_index=True)
-
-with col_c3:
-    st.markdown("**其他商品與指標**")
-    st.dataframe(fetch_market_data_by_date(comm3, selected_date), use_container_width=True, hide_index=True)
-
-st.markdown("---")
-st.markdown(f'<div class="main-title">TIS晨報 - 新聞摘要 ({selected_date})</div>', unsafe_allow_html=True)
-
-# API 呼叫函數
 def call_qwen_api(messages_list, key, b_url, chosen_model):
     if not key:
         return None, "尚未偵測到 API Key。"
@@ -221,7 +122,7 @@ def call_qwen_api(messages_list, key, b_url, chosen_model):
         for m_name in models_to_try:
             try:
                 response = client.chat.completions.create(
-                    model=m_name, messages=messages_list, temperature=0.3, response_format={"type": "json_object"}
+                    model=m_name, messages=messages_list, temperature=0.1, response_format={"type": "json_object"}
                 )
                 if response and response.choices:
                     return response.choices[0].message.content, None
@@ -231,6 +132,117 @@ def call_qwen_api(messages_list, key, b_url, chosen_model):
         return None, f"所有模型嘗試皆失敗: {last_error}"
     except Exception as e:
         return None, f"API 初始化錯誤: {str(e)}"
+
+@st.cache_data(ttl=3600)
+def fetch_market_data_with_ai_fallback(tickers_dict, target_date_str, api_key, base_url, model):
+    data = []
+    target_dt = pd.to_datetime(target_date_str)
+    start_dt = target_dt - timedelta(days=15)
+    end_dt = target_dt + timedelta(days=1)
+    
+    missing_items = []
+    
+    for name, ticker in tickers_dict.items():
+        try:
+            t = yf.Ticker(ticker)
+            hist = t.history(start=start_dt.strftime('%Y-%m-%d'), end=end_dt.strftime('%Y-%m-%d'))
+            if not hist.empty:
+                hist = hist[hist.index.date <= target_dt.date()]
+                if not hist.empty:
+                    close = hist['Close'].iloc[-1]
+                    prev = hist['Close'].iloc[-2] if len(hist) >= 2 else close
+                    change = close - prev
+                    pct_change = (change / prev) * 100 if prev != 0 else 0.0
+                    
+                    data.append({
+                        "指數/商品": name,
+                        "收盤價": f"{close:,.2f}",
+                        "變動": f"{change:+,.2f}",
+                        "(%)": f"{pct_change:+.2f}%"
+                    })
+                    continue
+            missing_items.append(name)
+        except Exception:
+            missing_items.append(name)
+            
+    # 如果有抓不到的項目，透過 Qwen AI 參照 Yahoo 台灣、泰國、中國等真實市場數據進行智慧補齊
+    if missing_items and api_key:
+        prompt = f"""
+        你是一個專業的金融數據分析師。請根據 Yahoo Finance、Yahoo 台灣、Yahoo 泰國、Yahoo 中國與全球市場在日期【{target_date_str}】的真實歷史收盤行情，提供以下缺失標的的精準收盤價、漲跌變動與漲跌幅百分比：
+        缺失標的清單：{json.dumps(missing_items, ensure_ascii=False)}
+        
+        請務必以 JSON 格式回傳，格式範例：
+        {{
+          "標的名稱": {{"close": "12,345.67", "change": "+123.45", "pct": "+1.23%"}}
+        }}
+        """
+        messages = [{'role': 'system', 'content': '你是一個精通全球股市與商品行情的金融AI。'}, {'role': 'user', 'content': prompt}]
+        res_str, _ = call_qwen_api(messages, api_key, base_url, model)
+        if res_str:
+            try:
+                ai_data = json.loads(res_str)
+                for name in missing_items:
+                    if name in ai_data:
+                        val = ai_data[name]
+                        data.append({
+                            "指數/商品": name,
+                            "收盤價": val.get("close", "N/A"),
+                            "變動": val.get("change", "N/A"),
+                            "(%)": val.get("pct", "N/A")
+                        })
+                    else:
+                        data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
+            except Exception:
+                for name in missing_items:
+                    data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
+        else:
+            for name in missing_items:
+                data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
+                
+    # 確保順序與原本 dict 一致
+    ordered_data = []
+    data_dict = {item["指數/商品"]: item for item in data}
+    for name in tickers_dict.keys():
+        if name in data_dict:
+            ordered_data.append(data_dict[name])
+        else:
+            ordered_data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
+            
+    return pd.DataFrame(ordered_data)
+
+# 顯示市場收盤表格
+st.markdown(f'<div class="section-header">全球主要股市收盤表現（基準日：{selected_date}）</div>', unsafe_allow_html=True)
+col_i1, col_i2, col_i3 = st.columns(3)
+
+with col_i1:
+    st.markdown("**美、歐股市**")
+    st.dataframe(fetch_market_data_with_ai_fallback(group1_indices, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+
+with col_i2:
+    st.markdown("**亞洲股市**")
+    st.dataframe(fetch_market_data_with_ai_fallback(group2_indices, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+
+with col_i3:
+    st.markdown("**台灣與國際指數**")
+    st.dataframe(fetch_market_data_with_ai_fallback(group3_indices, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+
+st.markdown('<div class="section-header">大宗商品、匯率與債市表現</div>', unsafe_allow_html=True)
+col_c1, col_c2, col_c3 = st.columns(3)
+
+with col_c1:
+    st.markdown("**金屬能源 (Commodity)**")
+    st.dataframe(fetch_market_data_with_ai_fallback(comm1, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+
+with col_c2:
+    st.markdown("**農作商品 (Commodity)**")
+    st.dataframe(fetch_market_data_with_ai_fallback(comm2, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+
+with col_c3:
+    st.markdown("**其他商品與指標**")
+    st.dataframe(fetch_market_data_with_ai_fallback(comm3, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+
+st.markdown("---")
+st.markdown(f'<div class="main-title">TIS晨報 - 新聞摘要 ({selected_date})</div>', unsafe_allow_html=True)
 
 def generate_ai_news_summary(api_key, b_url, model):
     prompt = f"""
