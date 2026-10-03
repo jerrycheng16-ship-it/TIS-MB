@@ -43,10 +43,6 @@ st.markdown("""
         color: #d1d4dc;
         line-height: 1.6;
     }
-    /* 調整表格字型與邊框，貼近圖片簡潔風格 */
-    dataframe {
-        font-size: 14px !important;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -61,38 +57,65 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### ⏰ 自動更新機制")
 st.sidebar.write("系統設定於 **每天早上 07:00** 自動重新整理並呼叫 AI 生成最新晨報摘要。")
 
-# 依照圖片的三大欄位分類定義標的
-group1_tickers = {
-    "道瓊工業": "^DJI",
-    "標普 500": "^GSPC",
-    "那斯達克": "^IXIC",
-    "費城半導體": "^SOX",
-    "羅素 2000": "^RUT",
-    "FTSE 100": "^FTSE",
-    "DAX": "^GDAXI",
-    "CAC 40": "^FCHI",
-    "Stoxx 600": "^STOXX"
+# 依照圖片精確對應的標的清單
+group1_indices = {
+    "道瓊工業指數": "^DJI",
+    "那斯達克指數": "^IXIC",
+    "標普500指數": "^GSPC",
+    "費城半導體指數": "^SOX",
+    "羅素2000指數": "^RUT",
+    "英國FTSE 100": "^FTSE",
+    "德國DAX指數": "^GDAXI",
+    "法國CAC指數": "^FCHI",
+    "道瓊歐洲600指數": "^STOXX"
 }
 
-group2_tickers = {
-    "日經 225": "^N225",
-    "KOSPI": "^KS11",
+group2_indices = {
+    "日經225指數": "^N225",
+    "南韓KOSPI指數": "^KS11",
+    "恆生指數": "^HSI",
     "上證指數": "000001.SS",
-    "香港恆生": "^HSI",
-    "STI": "^STI",
-    "泰國 SET": "^SETI"
+    "新加坡STI指數": "^STI",
+    "泰國曼谷SET指數": "^SETI",
+    "富時馬來西亞指數": "^KLSE",
+    "菲律賓綜合指數": "PCOMP.PS",
+    "印尼雅加達指數": "^JKSE"
 }
 
-group3_tickers = {
-    "Crude Oil (WTI)": "CL=F",
-    "Natural Gas": "NG=F",
-    "Gold": "GC=F",
-    "Silver": "SI=F",
-    "Copper": "HG=F",
+group3_indices = {
+    "加權指數": "^TWII",
+    "不含電子指數": "^TWII",
+    "上櫃指數": "^TWOII",
+    "0050": "0050.TW",
+    "0051": "0051.TW",
+    "MSCI全球指數": "URTH",
+    "歐洲Stoxx 50": "^STOXX50E",
+    "MSCI新興市場": "EEM",
+    "MSCI拉丁美洲": "ILF"
+}
+
+comm1 = {
+    "Crude Oil 原油": "CL=F",
+    "Natural Gas 天然氣": "NG=F",
+    "Gold 黃金": "GC=F",
+    "Silver 白銀": "SI=F",
+    "Copper 銅": "HG=F"
+}
+
+comm2 = {
+    "CRB 商品指數": "^CRB",
+    "Corn 玉米": "ZC=F",
+    "Wheat 小麥": "ZW=F",
+    "Soybean 黃豆": "ZS=F",
+    "Cotton 棉花": "CT=F"
+}
+
+comm3 = {
     "DXY 美元指數": "DX-Y.NYB",
-    "US 10Y Yield": "^TNX",
-    "VIX": "^VIX",
-    "0050": "0050.TW"
+    "BDI運價指數": "BDI",
+    "VIX 指數": "^VIX",
+    "VXN 指數": "^VXN",
+    "美國10年公債殖利率": "^TNX"
 }
 
 @st.cache_data(ttl=3600)
@@ -108,34 +131,54 @@ def fetch_market_data(tickers_dict):
                 change = close - prev
                 pct_change = (change / prev) * 100
                 data.append({
-                    "市場/商品": name,
+                    "指數/商品": name,
                     "收盤價": f"{close:,.2f}",
-                    "漲跌": f"{change:+,.2f}",
-                    "漲跌幅 (%)": f"{pct_change:+.2f}%"
+                    "變動": f"{change:+,.2f}",
+                    "(%)": f"{pct_change:+.2f}%"
                 })
             else:
-                data.append({"市場/商品": name, "收盤價": "N/A", "漲跌": "N/A", "漲跌幅 (%)": "N/A"})
+                data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
         except Exception:
-            data.append({"市場/商品": name, "收盤價": "N/A", "漲跌": "N/A", "漲跌幅 (%)": "N/A"})
+            data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
     return pd.DataFrame(data)
 
-# 三欄式並排呈現市場表現（對應圖片的三大區塊格式）
-col_m1, col_m2, col_m3 = st.columns(3)
+# 上半部：三大指數區塊並排（美國/歐洲、亞洲、台灣/國際指數）
+st.markdown('<div class="section-header">全球主要股市收盤表現</div>', unsafe_allow_html=True)
+col_i1, col_i2, col_i3 = st.columns(3)
 
-with col_m1:
-    st.markdown('<div class="section-header">主要美股與歐股</div>', unsafe_allow_html=True)
-    df1 = fetch_market_data(group1_tickers)
-    st.dataframe(df1, use_container_width=True, hide_index=True)
+with col_i1:
+    st.markdown("**美、歐股市**")
+    df_i1 = fetch_market_data(group1_indices)
+    st.dataframe(df_i1, use_container_width=True, hide_index=True)
 
-with col_m2:
-    st.markdown('<div class="section-header">亞太主要股市</div>', unsafe_allow_html=True)
-    df2 = fetch_market_data(group2_tickers)
-    st.dataframe(df2, use_container_width=True, hide_index=True)
+with col_i2:
+    st.markdown("**亞洲股市**")
+    df_i2 = fetch_market_data(group2_indices)
+    st.dataframe(df_i2, use_container_width=True, hide_index=True)
 
-with col_m3:
-    st.markdown('<div class="section-header">商品、匯率與波動率</div>', unsafe_allow_html=True)
-    df3 = fetch_market_data(group3_tickers)
-    st.dataframe(df3, use_container_width=True, hide_index=True)
+with col_i3:
+    st.markdown("**台灣與國際指數**")
+    df_i3 = fetch_market_data(group3_indices)
+    st.dataframe(df_i3, use_container_width=True, hide_index=True)
+
+# 下半部：三大商品區塊並排（金屬能源、農作商品、其他商品）
+st.markdown('<div class="section-header">大宗商品、匯率與債市表現</div>', unsafe_allow_html=True)
+col_c1, col_c2, col_c3 = st.columns(3)
+
+with col_c1:
+    st.markdown("**金屬能源 (Commodity)**")
+    df_c1 = fetch_market_data(comm1)
+    st.dataframe(df_c1, use_container_width=True, hide_index=True)
+
+with col_c2:
+    st.markdown("**農作商品 (Commodity)**")
+    df_c2 = fetch_market_data(comm2)
+    st.dataframe(df_c2, use_container_width=True, hide_index=True)
+
+with col_c3:
+    st.markdown("**其他商品與指標**")
+    df_c3 = fetch_market_data(comm3)
+    st.dataframe(df_c3, use_container_width=True, hide_index=True)
 
 st.markdown("---")
 st.markdown('<div class="main-title">TIS晨報 - 新聞摘要 (基於路透、Yahoo財經、TradingView與阿里雲 Qwen AI)</div>', unsafe_allow_html=True)
@@ -193,7 +236,7 @@ def generate_ai_news_summary(api_key, model):
         }
     except Exception as e:
         return {
-            "美股焦點": f"❌ API 呼叫發生錯誤: {str(e)}\n\n💡 請檢查：\n1. 是否輸入了正確的「阿里雲 DashScope API Key」（非 OpenAI Key）。\n2. 帳戶餘額是否充足。\n3. 網路連線是否正常。",
+            "美股焦點": f"❌ API 呼叫發生錯誤: {str(e)}\n\n💡 請確認輸入的是正確的「阿里雲 DashScope API Key」（非 OpenAI Key），且帳戶餘額充足。",
             "債市焦點": "請確認 API Key 是否有效。",
             "能源盤後": "---",
             "貴金屬盤後": "---",
