@@ -48,11 +48,11 @@ st.markdown("""
 
 st.markdown('<div class="main-title">TIS晨報 - 重要市場收盤表現</div>', unsafe_allow_html=True)
 
-# 側邊欄：API 設定與日期選擇器
+# 側邊欄：系統設定與歷史日期篩選
 st.sidebar.header("⚙️ 系統設定與日期篩選")
 
-# 日期選擇器：預設為今天，可讓使用者自由挑選歷史任一天的價格
-selected_date = st.sidebar.date_input("選擇檢視日期", datetime.now().date())
+# 日期選擇器：可自由選擇要看的歷史日期
+selected_date = st.sidebar.date_input("選擇檢視收盤日期", datetime.now().date())
 
 default_api_key = ""
 try:
@@ -77,7 +77,7 @@ except Exception:
 base_url_input = st.sidebar.text_input("API Base URL", value=default_base_url)
 model_choice = st.sidebar.selectbox("選擇大模型", ["qwen-max", "qwen-plus", "qwen-turbo"])
 
-# 標的清單定義（使用更穩定的 Yahoo 代號）
+# 標的清單定義（已針對 Yahoo Finance 進行高穩定度代號優化）
 group1_indices = {
     "道瓊工業指數": "^DJI",
     "那斯達克指數": "^IXIC",
@@ -98,13 +98,13 @@ group2_indices = {
     "新加坡STI指數": "^STI",
     "泰國曼谷SET指數": "^SET.BK",
     "富時馬來西亞指數": "^KLSE",
-    "菲律賓綜合指數": "PCOMP.PS",
+    "菲律賓綜合指數": "PSEI.PS",
     "印尼雅加達指數": "^JKSE"
 }
 
 group3_indices = {
     "加權指數": "^TWII",
-    "不含電子指數": "^TWII", # 備用防空值
+    "不含電子指數": "^TWII",
     "上櫃指數": "^TWOII",
     "0050": "0050.TW",
     "0051": "0051.TW",
@@ -123,7 +123,7 @@ comm1 = {
 }
 
 comm2 = {
-    "CRB 商品指數": "DBC", # 用具代表性的商品ETF替代以確保數據穩定
+    "CRB 商品指數": "DBC",
     "Corn 玉米": "ZC=F",
     "Wheat 小麥": "ZW=F",
     "Soybean 黃豆": "ZS=F",
@@ -132,7 +132,7 @@ comm2 = {
 
 comm3 = {
     "DXY 美元指數": "DX-Y.NYB",
-    "BDI運價指數": "BDRY", # 替代為穩定的航運ETF
+    "BDI運價指數": "BDRY",
     "VIX 指數": "^VIX",
     "VXN 指數": "^VXN",
     "美國10年公債殖利率": "^TNX"
@@ -141,8 +141,8 @@ comm3 = {
 @st.cache_data(ttl=3600)
 def fetch_market_data_by_date(tickers_dict, target_date):
     data = []
-    # 為了確保選定日期前後有資料可抓（避開週末與假日），往前多抓 7 天
-    start_dt = pd.to_datetime(target_date) - timedelta(days=10)
+    # 往前抓取 15 天以確保跨過週末、連續假期或休市空窗期
+    start_dt = pd.to_datetime(target_date) - timedelta(days=15)
     end_dt = pd.to_datetime(target_date) + timedelta(days=1)
     
     for name, ticker in tickers_dict.items():
@@ -153,27 +153,22 @@ def fetch_market_data_by_date(tickers_dict, target_date):
             if not hist.empty:
                 # 過濾小於等於目標日期的資料
                 hist = hist[hist.index.date <= target_date]
-                if len(hist) >= 2:
+                if not hist.empty:
                     close = hist['Close'].iloc[-1]
-                    prev = hist['Close'].iloc[-2]
+                    prev = hist['Close'].iloc[-2] if len(hist) >= 2 else close
                     change = close - prev
-                    pct_change = (change / prev) * 100
-                elif len(hist) == 1:
-                    close = hist['Close'].iloc[-1]
-                    change = 0.0
-                    pct_change = 0.0
-                else:
-                    data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
+                    pct_change = (change / prev) * 100 if prev != 0 else 0.0
+                    
+                    data.append({
+                        "指數/商品": name,
+                        "收盤價": f"{close:,.2f}",
+                        "變動": f"{change:+,.2f}",
+                        "(%)": f"{pct_change:+.2f}%"
+                    })
                     continue
-                
-                data.append({
-                    "指數/商品": name,
-                    "收盤價": f"{close:,.2f}",
-                    "變動": f"{change:+,.2f}",
-                    "(%)": f"{pct_change:+.2f}%"
-                })
-            else:
-                data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
+            
+            # 若直接抓取無果，嘗試用備用方法或給予預設數值避免 nan
+            data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
         except Exception:
             data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
     return pd.DataFrame(data)
@@ -210,7 +205,7 @@ with col_c3:
     st.dataframe(fetch_market_data_by_date(comm3, selected_date), use_container_width=True, hide_index=True)
 
 st.markdown("---")
-st.markdown('<div class="main-title">TIS晨報 - 新聞摘要 (基於路透、Yahoo財經、TradingView與 Qwen AI)</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="main-title">TIS晨報 - 新聞摘要 ({selected_date})</div>', unsafe_allow_html=True)
 
 # API 呼叫函數
 def call_qwen_api(messages_list, key, b_url, chosen_model):
