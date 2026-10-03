@@ -4,7 +4,7 @@ from openai import OpenAI
 st.title("API 測試工具")
 
 # 輸入 API Key
-api_key = st.text_input("輸入您的 API Key", type="password", value="sk-ws-H.DHYEEDI.1jmZ.MEQCIFdnlkm9WsuFQifkLXtmeo04Ec_vlQPXrvQ2sudBuQZuAiBgbKJn3u8t42wgtb5cJxGe4LMSHzCr3er67pIdQWxqiW")
+api_key = st.text_input("輸入您的 API Key", type="password", value="sk-ws-H.DHPXPMR.J4zy.MEQCIGNFYU4vgKbBF6NvzPYHMsSFN2bdX6ZhkSAC1osCYzbYAiB9bUAId36D-0SiLcX9N8NhJw1IzG0fRcsmdvZcJV9IMg")
 model = st.selectbox("選擇模型", ["qwen-max", "qwen-plus", "qwen-turbo"])
 
 if st.button("測試呼叫 API"):
