@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 from datetime import datetime
-import os
 import json
 
 # 頁面設定
@@ -50,7 +49,14 @@ st.markdown('<div class="main-title">TIS晨報 - 重要市場收盤表現</div>'
 
 # 側邊欄：API 設定與定時更新資訊
 st.sidebar.header("⚙️ 系統設定")
-api_key = st.sidebar.text_input("請輸入阿里雲 API Key (DashScope)", type="password", value=os.environ.get("DASHSCOPE_API_KEY", ""))
+
+# 💡 您可以直接在此處引號內填入您的阿里雲 DashScope API Key
+api_key = st.sidebar.text_input(
+    "sk-ws-H.DHYEEDI.1jmZ.MEQCIFdnlkm9WsuFQifkLXtmeoO4Ec_vIQPXrvQ2sudBuQZuAiBgbKJn3u8t42wgtb5cJxGe4LMSHzCr3eR67pLdQWxqiw", 
+    type="password", 
+    value=""
+)
+
 model_choice = st.sidebar.selectbox("選擇阿里雲模型", ["qwen-max", "qwen-plus", "qwen-turbo"])
 
 st.sidebar.markdown("---")
@@ -187,7 +193,7 @@ st.markdown('<div class="main-title">TIS晨報 - 新聞摘要 (基於路透、Ya
 def generate_ai_news_summary(api_key, model):
     if not api_key:
         return {
-            "美股焦點": "⚠️ 請在左側邊欄輸入您的阿里雲 API Key (DashScope)，以自動生成新聞摘要。",
+            "美股焦點": "⚠️ 請在左側邊欄（或程式碼中）填入您的阿里雲 API Key (DashScope)，以自動生成新聞摘要。",
             "債市焦點": "請輸入 API Key 後點擊更新。",
             "能源盤後": "請輸入 API Key 後點擊更新。",
             "貴金屬盤後": "請輸入 API Key 後點擊更新。",
