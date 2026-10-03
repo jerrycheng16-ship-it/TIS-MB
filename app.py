@@ -148,7 +148,6 @@ def fetch_market_data_robust(tickers_dict, target_date_str, api_key, base_url, m
                 if hist.index.tz is not None:
                     hist.index = hist.index.tz_localize(None)
                 
-                # 篩選小於等於目標日期的資料（若遇週末假日，會自動抓取最近一個交易日如星期五的收盤價）
                 hist = hist[hist.index.date <= target_dt.date()]
                 
                 if not hist.empty:
@@ -168,10 +167,9 @@ def fetch_market_data_robust(tickers_dict, target_date_str, api_key, base_url, m
         except Exception:
             missing_items.append(name)
             
-    # AI 智慧補齊抓不到或仍為空值的項目
     if missing_items and api_key:
         prompt = f"""
-        你是一個專業的金融數據分析師。請根據全球與台灣股市（包含加權指數、櫃買指數、0050、0051等）在日期【{target_date_str}】（若為假日則對應最近一個交易日收盤）的真實歷史收盤行情，提供以下缺失標的的精準收盤價、漲跌變動與漲跌幅百分比：
+        你是一個專業的金融數據分析師。請根據全球與台灣股市（包含加權指數、櫃買指數、0050、0051等）在日期【{target_date_str}】的真實歷史收盤行情，提供以下缺失標的的精準收盤價、漲跌變動與漲跌幅百分比：
         缺失標的清單：{json.dumps(missing_items, ensure_ascii=False)}
         
         請務必以 JSON 格式回傳，格式範例：
@@ -241,6 +239,40 @@ with col_c2:
 with col_c3:
     st.markdown("**其他商品與指標**")
     st.dataframe(fetch_market_data_robust(comm3, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+
+# =========================================================
+# 🔍 額外新增：台股關鍵標的（櫃買指數、0050、0051）近 10 天除錯專用表格
+# =========================================================
+st.markdown("---")
+st.markdown('<div class="section-header">🔍 除錯專用：櫃買指數、0050、0051 近 10 天歷史收盤價檢視</div>', unsafe_allow_html=True)
+
+debug_tickers = {
+    "櫃買指數 (^TWOII)": "^TWOII",
+    "0050 (0050.TW)": "0050.TW",
+    "0051 (0051.TW)": "0051.TW"
+}
+
+debug_dfs = []
+for label, t_code in debug_tickers.items():
+    try:
+        t_obj = yf.Ticker(t_code)
+        hist = t_obj.history(period="15d")
+        if not hist.empty:
+            if hist.index.tz is not None:
+                hist.index = hist.index.tz_localize(None)
+            df_sub = hist[['Close']].tail(10).copy()
+            df_sub.columns = [label]
+            df_sub = df_sub.reset_index()
+            df_sub['Date'] = df_sub['Date'].dt.strftime('%Y-%m-%d')
+            debug_dfs.append(df_sub.set_index('Date'))
+    except Exception:
+        pass
+
+if debug_dfs:
+    combined_debug_df = pd.concat(debug_dfs, axis=1).sort_index(ascending=False)
+    st.dataframe(combined_debug_df, use_container_width=True)
+else:
+    st.warning("⚠️ 目前無法取得除錯標的的歷史資料，請檢查網路連線或代號。")
 
 st.markdown("---")
 st.markdown(f'<div class="main-title">TIS晨報 - 新聞摘要 ({selected_date})</div>', unsafe_allow_html=True)
