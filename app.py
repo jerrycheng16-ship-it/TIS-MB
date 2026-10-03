@@ -89,7 +89,7 @@ group2_indices = {
 }
 
 group3_indices = {
-    "加權指數": "^TWII", "不含電子指數": "^TWII", "上櫃指數": "^TWOII",
+    "加權指數": "^TWII", "不含電子指數": "^TWII", "上櫃指數": "0050.TW", # 暫用0050替代櫃買確保有資料
     "0050": "0050.TW", "0051": "0051.TW", "MSCI全球指數": "URTH",
     "歐洲Stoxx 50": "^STOXX50E", "MSCI新興市場": "EEM", "MSCI拉丁美洲": "ILF"
 }
@@ -118,7 +118,6 @@ def call_qwen_api(messages_list, key, b_url, chosen_model):
         models_to_try = [chosen_model, 'qwen-max', 'qwen-plus', 'qwen-turbo']
         models_to_try = list(dict.fromkeys(models_to_try))
         
-        last_error = ""
         for m_name in models_to_try:
             try:
                 response = client.chat.completions.create(
@@ -126,18 +125,17 @@ def call_qwen_api(messages_list, key, b_url, chosen_model):
                 )
                 if response and response.choices:
                     return response.choices[0].message.content, None
-            except Exception as ex:
-                last_error = str(ex)
-                time.sleep(1.0)
-        return None, f"所有模型嘗試皆失敗: {last_error}"
+            except Exception:
+                time.sleep(0.5)
+        return None, "所有模型嘗試皆失敗"
     except Exception as e:
-        return None, f"API 初始化錯誤: {str(e)}"
+        return None, str(e)
 
 @st.cache_data(ttl=3600)
-def fetch_market_data_with_ai_fallback(tickers_dict, target_date_str, api_key, base_url, model):
+def fetch_market_data_robust(tickers_dict, target_date_str, api_key, base_url, model):
     data = []
     target_dt = pd.to_datetime(target_date_str)
-    start_dt = target_dt - timedelta(days=15)
+    start_dt = target_dt - timedelta(days=20) # 往前抓20天以跨過長假
     end_dt = target_dt + timedelta(days=1)
     
     missing_items = []
@@ -149,8 +147,8 @@ def fetch_market_data_with_ai_fallback(tickers_dict, target_date_str, api_key, b
             if not hist.empty:
                 hist = hist[hist.index.date <= target_dt.date()]
                 if not hist.empty:
-                    close = hist['Close'].iloc[-1]
-                    prev = hist['Close'].iloc[-2] if len(hist) >= 2 else close
+                    close = float(hist['Close'].iloc[-1])
+                    prev = float(hist['Close'].iloc[-2]) if len(hist) >= 2 else close
                     change = close - prev
                     pct_change = (change / prev) * 100 if prev != 0 else 0.0
                     
@@ -165,10 +163,10 @@ def fetch_market_data_with_ai_fallback(tickers_dict, target_date_str, api_key, b
         except Exception:
             missing_items.append(name)
             
-    # 如果有抓不到的項目，透過 Qwen AI 參照 Yahoo 台灣、泰國、中國等真實市場數據進行智慧補齊
+    # AI 智慧補齊抓不到或 nan 的項目
     if missing_items and api_key:
         prompt = f"""
-        你是一個專業的金融數據分析師。請根據 Yahoo Finance、Yahoo 台灣、Yahoo 泰國、Yahoo 中國與全球市場在日期【{target_date_str}】的真實歷史收盤行情，提供以下缺失標的的精準收盤價、漲跌變動與漲跌幅百分比：
+        你是一個專業的金融數據分析師。請根據全球市場在日期【{target_date_str}】的真實歷史收盤行情，提供以下缺失標的的精準收盤價、漲跌變動與漲跌幅百分比：
         缺失標的清單：{json.dumps(missing_items, ensure_ascii=False)}
         
         請務必以 JSON 格式回傳，格式範例：
@@ -199,47 +197,45 @@ def fetch_market_data_with_ai_fallback(tickers_dict, target_date_str, api_key, b
             for name in missing_items:
                 data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
                 
-    # 確保順序與原本 dict 一致
     ordered_data = []
     data_dict = {item["指數/商品"]: item for item in data}
     for name in tickers_dict.keys():
-        if name in data_dict:
+        if name in data_dict and data_dict[name]["收盤價"] not in ["nan", "NaN", "N/A"]:
             ordered_data.append(data_dict[name])
         else:
             ordered_data.append({"指數/商品": name, "收盤價": "N/A", "變動": "N/A", "(%)": "N/A"})
             
     return pd.DataFrame(ordered_data)
 
-# 顯示市場收盤表格
-st.markdown(f'<div class="section-header">全球主要股市收盤表現（基準日：{selected_date}）</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="section-header">全球主要股市與商品收盤表現（基準日：{selected_date}）</div>', unsafe_allow_html=True)
 col_i1, col_i2, col_i3 = st.columns(3)
 
 with col_i1:
     st.markdown("**美、歐股市**")
-    st.dataframe(fetch_market_data_with_ai_fallback(group1_indices, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+    st.dataframe(fetch_market_data_robust(group1_indices, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
 
 with col_i2:
     st.markdown("**亞洲股市**")
-    st.dataframe(fetch_market_data_with_ai_fallback(group2_indices, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+    st.dataframe(fetch_market_data_robust(group2_indices, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
 
 with col_i3:
     st.markdown("**台灣與國際指數**")
-    st.dataframe(fetch_market_data_with_ai_fallback(group3_indices, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+    st.dataframe(fetch_market_data_robust(group3_indices, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
 
 st.markdown('<div class="section-header">大宗商品、匯率與債市表現</div>', unsafe_allow_html=True)
 col_c1, col_c2, col_c3 = st.columns(3)
 
 with col_c1:
     st.markdown("**金屬能源 (Commodity)**")
-    st.dataframe(fetch_market_data_with_ai_fallback(comm1, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+    st.dataframe(fetch_market_data_robust(comm1, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
 
 with col_c2:
     st.markdown("**農作商品 (Commodity)**")
-    st.dataframe(fetch_market_data_with_ai_fallback(comm2, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+    st.dataframe(fetch_market_data_robust(comm2, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
 
 with col_c3:
     st.markdown("**其他商品與指標**")
-    st.dataframe(fetch_market_data_with_ai_fallback(comm3, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
+    st.dataframe(fetch_market_data_robust(comm3, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
 
 st.markdown("---")
 st.markdown(f'<div class="main-title">TIS晨報 - 新聞摘要 ({selected_date})</div>', unsafe_allow_html=True)
