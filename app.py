@@ -3,6 +3,7 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime
 import json
+import time
 
 # 頁面設定
 st.set_page_config(
@@ -58,12 +59,22 @@ except Exception:
     pass
 
 api_key = st.sidebar.text_input(
-    "阿里雲 API Key (DashScope)", 
+    "阿里雲 / 中轉站 API Key", 
     type="password", 
     value=default_api_key
 )
 
-model_choice = st.sidebar.selectbox("選擇阿里雲模型", ["qwen-max", "qwen-plus", "qwen-turbo"])
+# 支援自訂或從 secrets 讀取 base_url（解決中轉站與官方端點 401 錯誤的核心）
+default_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+try:
+    if "DASHSCOPE_BASE_URL" in st.secrets:
+        default_base_url = st.secrets["DASHSCOPE_BASE_URL"]
+except Exception:
+    pass
+
+base_url_input = st.sidebar.text_input("API Base URL (若使用中轉站請在此修改)", value=default_base_url)
+
+model_choice = st.sidebar.selectbox("選擇大模型", ["qwen-max", "qwen-plus", "qwen-turbo"])
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### ⏰ 自動更新機制")
@@ -186,14 +197,69 @@ with col_c3:
     st.dataframe(fetch_market_data(comm3), use_container_width=True, hide_index=True)
 
 st.markdown("---")
-st.markdown('<div class="main-title">TIS晨報 - 新聞摘要 (基於路透、Yahoo財經、TradingView與阿里雲 Qwen AI)</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">TIS晨報 - 新聞摘要 (基於路透、Yahoo財經、TradingView與 Qwen AI)</div>', unsafe_allow_html=True)
 
-# 透過阿里雲 DashScope API 生成新聞摘要
-def generate_ai_news_summary(api_key, model):
-    if not api_key:
+# 參照 Fund Report 結構精進的 API 呼叫函數（支援多模型輪試與動態 Base URL）
+def call_qwen_api(messages_list, key, b_url, chosen_model):
+    if not key:
+        return None, "尚未偵測到 API Key。請確認已設定於 secrets.toml 或是側邊欄中。"
+        
+    try:
+        from openai import OpenAI
+        client = OpenAI(
+            api_key=key.strip(),
+            base_url=b_url.strip()
+        )
+        
+        # 優先嘗試使用者選擇的模型，若失敗則依序嘗試備用模型
+        models_to_try = [chosen_model, 'qwen-max', 'qwen-plus', 'qwen-turbo']
+        # 去除重複項
+        models_to_try = list(dict.fromkeys(models_to_try))
+        
+        last_error = ""
+        for m_name in models_to_try:
+            try:
+                response = client.chat.completions.create(
+                    model=m_name,
+                    messages=messages_list,
+                    temperature=0.3,
+                    response_format={"type": "json_object"}
+                )
+                if response and response.choices:
+                    return response.choices[0].message.content, None
+            except Exception as ex:
+                last_error = str(ex)
+                time.sleep(1.0)
+                
+        return None, f"所有模型嘗試皆失敗，原因: {last_error}"
+    except Exception as e:
+        return None, f"API 初始化錯誤: {str(e)}"
+
+def generate_ai_news_summary(api_key, b_url, model):
+    prompt = """
+    請模擬專業華爾街金融分析師，依據路透社(Reuters)、Yahoo Finance與TradingView的最新市場動態與總體經濟趨勢，產出今日專業的「TIS晨報-新聞摘要」。
+    請嚴格分成以下六大板塊，針對當天市場標的與相關資訊進行深度結構化整理，以專業流暢的繁體中文撰寫：
+    1. 美股焦點
+    2. 債市焦點
+    3. 能源盤後
+    4. 貴金屬盤後
+    5. 紐約匯市
+    6. 台幣焦點
+    
+    請務必以 JSON 格式回傳，鍵名必須對應為：us_stock, bond_market, energy, precious_metals, forex, twd。
+    """
+    
+    messages = [
+        {'role': 'system', 'content': '你是一個頂尖的財經主編與總經分析師。'},
+        {'role': 'user', 'content': prompt}
+    ]
+    
+    res_str, err = call_qwen_api(messages, api_key, b_url, model)
+    if not res_str:
+        err_msg = f"❌ API 呼叫發生錯誤: {err}\n\n💡 提示：若您使用的是第三方中轉站，請在側邊欄確認 Base URL 是否正確，或檢查 API Key 是否有效與餘額充足。"
         return {
-            "美股焦點": "⚠️ 尚未偵測到 API Key。請確認已設定於 secrets.toml 或是側邊欄中。",
-            "債市焦點": "請設定 API Key。",
+            "美股焦點": err_msg,
+            "債市焦點": "請檢查 API 設定。",
             "能源盤後": "---",
             "貴金屬盤後": "---",
             "紐約匯市": "---",
@@ -201,36 +267,7 @@ def generate_ai_news_summary(api_key, model):
         }
     
     try:
-        from openai import OpenAI
-        client = OpenAI(
-            api_key=api_key,
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
-        )
-        
-        prompt = """
-        請模擬專業華爾街金融分析師，依據路透社(Reuters)、Yahoo Finance與TradingView的最新市場動態與總體經濟趨勢，產出今日專業的「TIS晨報-新聞摘要」。
-        請嚴格分成以下六大板塊，針對當天市場標的與相關資訊進行深度結構化整理，以專業流暢的繁體中文撰寫：
-        1. 美股焦點
-        2. 債市焦點
-        3. 能源盤後
-        4. 貴金屬盤後
-        5. 紐約匯市
-        6. 台幣焦點
-        
-        請務必以 JSON 格式回傳，鍵名必須對應為：us_stock, bond_market, energy, precious_metals, forex, twd。
-        """
-        
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[
-                {'role': 'system', 'content': '你是一個頂尖的財經主編與總經分析師。'},
-                {'role': 'user', 'content': prompt}
-            ],
-            response_format={"type": "json_object"}
-        )
-        
-        raw_content = completion.choices[0].message.content
-        content_dict = json.loads(raw_content)
+        content_dict = json.loads(res_str)
         return {
             "美股焦點": content_dict.get("us_stock", ""),
             "債市焦點": content_dict.get("bond_market", ""),
@@ -241,8 +278,8 @@ def generate_ai_news_summary(api_key, model):
         }
     except Exception as e:
         return {
-            "美股焦點": f"❌ API 呼叫發生錯誤: {str(e)}\n\n💡 提示：請確認您的阿里雲 API Key 是否正確且帳戶餘額充足。",
-            "債市焦點": "請檢查 API 設定。",
+            "美股焦點": f"❌ JSON 解析失敗: {str(e)}\n原始回傳內容: {res_str}",
+            "債市焦點": "資料解析異常。",
             "能源盤後": "---",
             "貴金屬盤後": "---",
             "紐約匯市": "---",
@@ -253,8 +290,8 @@ current_time = datetime.now()
 is_7am_refresh = (current_time.hour == 7 and current_time.minute < 5)
 
 if st.sidebar.button("🔄 立即手動更新新聞摘要") or 'news_cache' not in st.session_state or is_7am_refresh:
-    with st.spinner("正在呼叫阿里雲 Qwen 整合全球財經新聞來源並生成摘要..."):
-        st.session_state['news_cache'] = generate_ai_news_summary(api_key, model_choice)
+    with st.spinner("正在呼叫 API 整合全球財經新聞來源並生成摘要..."):
+        st.session_state['news_cache'] = generate_ai_news_summary(api_key, base_url_input, model_choice)
         st.session_state['last_updated'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
 
 st.caption(f"📌 新聞摘要最後更新時間：{st.session_state.get('last_updated', '尚未更新')} ｜ 每日早上 07:00 自動刷新快取")
