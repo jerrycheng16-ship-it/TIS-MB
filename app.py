@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
-import twstock
+import requests
 from datetime import datetime, timedelta
 import json
 import time
@@ -47,12 +46,27 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-title">TIS晨報 - 重要市場收盤表現</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">TIS晨報 - 重要市場收盤表現 (Alpha Vantage 驅動)</div>', unsafe_allow_html=True)
 
-# 側邊欄：系統設定與歷史日期篩選
-st.sidebar.header("⚙️ 系統設定與日期篩選")
+# 側邊欄：系統設定與 API Key
+st.sidebar.header("⚙️ 系統設定與 API 連結")
 selected_date = st.sidebar.date_input("選擇檢視收盤日期", datetime.now().date())
 
+# Alpha Vantage API Key 設定
+default_av_key = ""
+try:
+    if "ALPHA_VANTAGE_API_KEY" in st.secrets:
+        default_av_key = st.secrets["ALPHA_VANTAGE_API_KEY"]
+except Exception:
+    pass
+
+av_api_key = st.sidebar.text_input(
+    "Alpha Vantage API Key", 
+    type="password", 
+    value=default_av_key
+)
+
+# Qwen / 阿里雲 API 設定（給新聞摘要用）
 default_api_key = ""
 try:
     if "DASHSCOPE_API_KEY" in st.secrets:
@@ -61,7 +75,7 @@ except Exception:
     pass
 
 api_key = st.sidebar.text_input(
-    "阿里雲 / 中轉站 API Key (僅供新聞摘要使用)", 
+    "阿里雲 / 中轉站 API Key (新聞摘要)", 
     type="password", 
     value=default_api_key
 )
@@ -76,98 +90,71 @@ except Exception:
 base_url_input = st.sidebar.text_input("API Base URL", value=default_base_url)
 model_choice = st.sidebar.selectbox("選擇大模型", ["qwen-max", "qwen-plus", "qwen-turbo"])
 
-# 定義標的清單
+# 定義標的清單（對應 Alpha Vantage 支援的代號格式）
 group1_indices = {
-    "道瓊工業指數": "^DJI", "那斯達克指數": "^IXIC", "標普500指數": "^GSPC",
-    "費城半導體指數": "^SOX", "羅素2000指數": "^RUT", "英國FTSE 100": "^FTSE",
-    "德國DAX指數": "^GDAXI", "法國CAC指數": "^FCHI", "道瓊歐洲600指數": "^STOXX"
+    "道瓊工業指數": "DIA", "那斯達克指數": "QQQ", "標普500指數": "SPY",
+    "費城半導體指數": "SOXX", "羅素2000指數": "IWM", "英國FTSE 100": "ISF.L",
+    "德國DAX指數": "DAX.EX", "法國CAC指數": "CAC.PA", "道瓊歐洲600指數": "EXV1.DE"
 }
 
 group2_indices = {
-    "日經225指數": "^N225", "南韓KOSPI指數": "^KS11", "恆生指數": "^HSI",
-    "上證指數": "000001.SS", "新加坡STI指數": "^STI", "泰國曼谷SET指數": "^SET.BK",
-    "富時馬來西亞指數": "^KLSE", "菲律賓綜合指數": "PSEI.PS", "印尼雅加達指數": "^JKSE"
+    "日經225指數": "1321.T", "南韓KOSPI指數": "069500.KS", "恆生指數": "2800.HK",
+    "上證指數": "510050.SS", "新加坡STI指數": "ES3.SI", "泰國曼谷SET指數": "SET50.BK",
+    "富時馬來西亞指數": "0820EA.KL", "菲律賓綜合指數": "PMP.PS", "印尼雅加達指數": "XIIC.JK"
 }
 
 group3_indices = {
-    "加權指數": "^TWII", "不含電子指數": "^TWII", "上櫃指數": "TWSE_TWO",
-    "0050": "0050", "0051": "0051", "MSCI全球指數": "URTH",
-    "歐洲Stoxx 50": "^STOXX50E", "MSCI新興市場": "EEM", "MSCI拉丁美洲": "ILF"
+    "加權指數": "^TWII", "不含電子指數": "^TWII", "上櫃指數": "TWOII.TW",
+    "0050": "0050.TW", "0051": "0051.TW", "MSCI全球指數": "URTH",
+    "歐洲Stoxx 50": "FEZ", "MSCI新興市場": "EEM", "MSCI拉丁美洲": "ILF"
 }
 
 comm1 = {
-    "Crude Oil 原油": "CL=F", "Natural Gas 天然氣": "NG=F", "Gold 黃金": "GC=F",
-    "Silver 白銀": "SI=F", "Copper 銅": "HG=F"
+    "Crude Oil 原油": "USO", "Natural Gas 天然氣": "UNG", "Gold 黃金": "GLD",
+    "Silver 白銀": "SLV", "Copper 銅": "CPER"
 }
 
 comm2 = {
-    "CRB 商品指數": "DBC", "Corn 玉米": "ZC=F", "Wheat 小麥": "ZW=F",
-    "Soybean 黃豆": "ZS=F", "Cotton 棉花": "CT=F"
+    "CRB 商品指數": "DBC", "Corn 玉米": "CORN", "Wheat 小麥": "WEAT",
+    "Soybean 黃豆": "SOYB", "Cotton 棉花": "BAL"
 }
 
 comm3 = {
-    "DXY 美元指數": "DX-Y.NYB", "BDI運價指數": "BDRY", "VIX 指數": "^VIX",
-    "VXN 指數": "^VXN", "美國10年公債殖利率": "^TNX"
+    "DXY 美元指數": "UUP", "BDI運價指數": "BDRY", "VIX 指數": "VIXY",
+    "VXN 指數": "VIXY", "美國10年公債殖利率": "IEF"
 }
 
-# 輔助函數：透過 twstock 抓取台股個股/ETF歷史資料
-def get_twstock_history(stock_id, target_dt):
-    try:
-        stock = twstock.Stock(stock_id)
-        # twstock 預設抓取近期資料，我們利用 fetch_from 或抓取最近資料
-        # 轉換 target_dt 為年、月
-        df = pd.DataFrame(stock.data, columns=['date', 'capacity', 'turnover', 'open', 'high', 'low', 'close', 'change', 'transaction'])
-        df['date'] = pd.to_datetime(df['date'])
-        df = df[df['date'] <= pd.to_datetime(target_dt)]
-        if not df.empty:
-            df = df.sort_values('date')
-            close = float(df['close'].iloc[-1])
-            prev = float(df['close'].iloc[-2]) if len(df) >= 2 else close
-            change = close - prev
-            pct = (change / prev) * 100 if prev != 0 else 0.0
-            return f"{close:,.2f}", f"{change:+,.2f}", f"{pct:+.2f}%"
-    except Exception:
-        pass
-    return "N/A", "N/A", "N/A"
-
+# 透過 Alpha Vantage 抓取歷史與收盤資料的函數
 @st.cache_data(ttl=3600)
-def fetch_market_data_hybrid(tickers_dict, target_date_str):
+def fetch_alpha_vantage_data(tickers_dict, target_date_str, av_key):
     data = []
     target_dt = pd.to_datetime(target_date_str)
-    start_dt = target_dt - timedelta(days=20)
-    end_dt = target_dt + timedelta(days=1)
     
-    for name, ticker in tickers_dict.items():
+    for name, symbol in tickers_dict.items():
         val_close, val_change, val_pct = "N/A", "N/A", "N/A"
-        try:
-            # 針對台股使用 twstock 抓取
-            if name in ["0050", "0051"]:
-                val_close, val_change, val_pct = get_twstock_history(ticker, target_dt)
-                data.append({"指數/商品": name, "收盤價": val_close, "變動": val_change, "(%)": val_pct})
-                continue
-            elif name in ["加權指數", "上櫃指數", "不含電子指數"] and name != "不含電子指數":
-                # 櫃買或加權指數透過 twstock 嘗試取得或以預設/編輯欄位補足
-                if name == "上櫃指數":
-                    # twstock 針對櫃買指數的處理
-                    try:
-                        # 嘗試用 twstock 抓取櫃買代表性數據或維持手動微調
-                        val_close, val_change, val_pct = "280.50", "+1.20", "+0.43%"
-                    except Exception:
-                        pass
-                    data.append({"指數/商品": name, "收盤價": val_close, "變動": val_change, "(%)": val_pct})
-                    continue
-
-            # 國際市場使用 yfinance
-            t = yf.Ticker(ticker)
-            hist = t.history(start=start_dt.strftime('%Y-%m-%d'), end=end_dt.strftime('%Y-%m-%d'))
+        if not av_key:
+            data.append({"指數/商品": name, "收盤價": "未填 API Key", "變動": "N/A", "(%)": "N/A"})
+            continue
             
-            if not hist.empty:
-                if hist.index.tz is not None:
-                    hist.index = hist.index.tz_localize(None)
-                hist = hist[hist.index.date <= target_dt.date()]
-                if not hist.empty:
-                    close = float(hist['Close'].iloc[-1])
-                    prev = float(hist['Close'].iloc[-2]) if len(hist) >= 2 else close
+        try:
+            # 呼叫 Alpha Vantage DAILY 接口
+            url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&outputsize=compact&apikey={av_key}"
+            response = requests.get(url)
+            result = response.json()
+            
+            time.sleep(0.2) # 避免超過頻率限制
+            
+            time_series = result.get("Time Series (Daily)")
+            if time_series:
+                df = pd.DataFrame.from_dict(time_series, orient='index')
+                df.index = pd.to_datetime(df.index)
+                df = df.sort_index()
+                
+                # 篩選小於等於目標日期的資料
+                df = df[df.index <= target_dt]
+                if not df.empty:
+                    close = float(df['4. close'].iloc[-1])
+                    prev = float(df['4. close'].iloc[-2]) if len(df) >= 2 else close
                     change = close - prev
                     pct_change = (change / prev) * 100 if prev != 0 else 0.0
                     
@@ -185,22 +172,22 @@ def fetch_market_data_hybrid(tickers_dict, target_date_str):
         })
     return pd.DataFrame(data)
 
-st.markdown(f'<div class="section-header">全球主要股市與商品收盤表現（基準日：{selected_date}）- 支援下方表格直接編輯校正</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="section-header">全球主要股市與商品收盤表現（基準日：{selected_date}）- Alpha Vantage 數據源</div>', unsafe_allow_html=True)
 col_i1, col_i2, col_i3 = st.columns(3)
 
 with col_i1:
     st.markdown("**美、歐股市**")
-    df1 = fetch_market_data_hybrid(group1_indices, str(selected_date))
+    df1 = fetch_alpha_vantage_data(group1_indices, str(selected_date), av_api_key)
     edited_df1 = st.data_editor(df1, hide_index=True, key="edit_g1")
 
 with col_i2:
     st.markdown("**亞洲股市**")
-    df2 = fetch_market_data_hybrid(group2_indices, str(selected_date))
+    df2 = fetch_alpha_vantage_data(group2_indices, str(selected_date), av_api_key)
     edited_df2 = st.data_editor(df2, hide_index=True, key="edit_g2")
 
 with col_i3:
-    st.markdown("**台灣與國際指數 (twstock + 線上微調)**")
-    df3 = fetch_market_data_hybrid(group3_indices, str(selected_date))
+    st.markdown("**台灣與國際指數**")
+    df3 = fetch_alpha_vantage_data(group3_indices, str(selected_date), av_api_key)
     edited_df3 = st.data_editor(df3, hide_index=True, key="edit_g3")
 
 st.markdown('<div class="section-header">大宗商品、匯率與債市表現</div>', unsafe_allow_html=True)
@@ -208,48 +195,49 @@ col_c1, col_c2, col_c3 = st.columns(3)
 
 with col_c1:
     st.markdown("**金屬能源 (Commodity)**")
-    df_c1 = fetch_market_data_hybrid(comm1, str(selected_date))
+    df_c1 = fetch_alpha_vantage_data(comm1, str(selected_date), av_api_key)
     edited_df_c1 = st.data_editor(df_c1, hide_index=True, key="edit_c1")
 
 with col_c2:
     st.markdown("**農作商品 (Commodity)**")
-    df_c2 = fetch_market_data_hybrid(comm2, str(selected_date))
+    df_c2 = fetch_alpha_vantage_data(comm2, str(selected_date), av_api_key)
     edited_df_c2 = st.data_editor(df_c2, hide_index=True, key="edit_c2")
 
 with col_c3:
     st.markdown("**其他商品與指標**")
-    df_c3 = fetch_market_data_hybrid(comm3, str(selected_date))
+    df_c3 = fetch_alpha_vantage_data(comm3, str(selected_date), av_api_key)
     edited_df_c3 = st.data_editor(df_c3, hide_index=True, key="edit_c3")
 
 # =========================================================
-# 🔍 除錯專用表格：強制呈現櫃買指數、0050、0051 近 10 天歷史收盤價（改由 twstock 抓取）
+# 🔍 除錯專用表格：櫃買指數、0050、0051 近 10 天歷史收盤價
 # =========================================================
 st.markdown("---")
-st.markdown('<div class="section-header">🔍 除錯專用：櫃買指數、0050、0051 近 10 天歷史收盤價檢視 (twstock)</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">🔍 除錯專用：櫃買指數、0050、0051 近 10 天歷史收盤價檢視 (Alpha Vantage)</div>', unsafe_allow_html=True)
 
-debug_data = {}
-# 抓取 0050 近 10 天
-try:
-    s0050 = twstock.Stock('0050')
-    df_50 = pd.DataFrame(s0050.data, columns=['date', 'capacity', 'turnover', 'open', 'high', 'low', 'close', 'change', 'transaction'])
-    df_50['date'] = pd.to_datetime(df_50['date']).dt.strftime('%Y-%m-%d')
-    debug_data["0050 (0050)"] = df_50.set_index('date')['close'].tail(10)
-except Exception:
-    debug_data["0050 (0050)"] = pd.Series(dtype=float)
+debug_tickers = {
+    "0050 (0050.TW)": "0050.TW",
+    "0051 (0051.TW)": "0051.TW",
+    "櫃買指數 (TWOII)": "TWOII.TW"
+}
 
-# 抓取 0051 近 10 天
-try:
-    s0051 = twstock.Stock('0051')
-    df_51 = pd.DataFrame(s0051.data, columns=['date', 'capacity', 'turnover', 'open', 'high', 'low', 'close', 'change', 'transaction'])
-    df_51['date'] = pd.to_datetime(df_51['date']).dt.strftime('%Y-%m-%d')
-    debug_data["0051 (0051)"] = df_51.set_index('date')['close'].tail(10)
-except Exception:
-    debug_data["0051 (0051)"] = pd.Series(dtype=float)
+all_debug_data = {}
+for label, symbol in debug_tickers.items():
+    try:
+        if av_api_key:
+            url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&outputsize=compact&apikey={av_api_key}"
+            res = requests.get(url).json()
+            time.sleep(0.2)
+            ts = res.get("Time Series (Daily)")
+            if ts:
+                df_sub = pd.DataFrame.from_dict(ts, orient='index')
+                df_sub.index = pd.to_datetime(df_sub.index).strftime('%Y-%m-%d')
+                all_debug_data[label] = df_sub['4. close'].tail(10).astype(float)
+                continue
+        all_debug_data[label] = pd.Series(dtype=float)
+    except Exception:
+        all_debug_data[label] = pd.Series(dtype=float)
 
-# 櫃買指數強制呈現欄位（若 twstock 無法直接取得歷史指數，以空值欄位確保表格完整呈現）
-debug_data["櫃買指數 (twstock)"] = pd.Series(dtype=float)
-
-debug_combined_df = pd.DataFrame(debug_data)
+debug_combined_df = pd.DataFrame(all_debug_data)
 if not debug_combined_df.empty:
     debug_combined_df = debug_combined_df.sort_index(ascending=False)
     st.dataframe(debug_combined_df, use_container_width=True)
