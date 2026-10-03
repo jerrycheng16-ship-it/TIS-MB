@@ -242,7 +242,7 @@ with col_c3:
     st.dataframe(fetch_market_data_robust(comm3, str(selected_date), api_key, base_url_input, model_choice), use_container_width=True, hide_index=True)
 
 # =========================================================
-# 🔍 除錯專用表格：櫃買指數、0050、0051 近 10 天歷史收盤價（純指數與原代號）
+# 🔍 除錯專用表格：櫃買指數、0050、0051 近 10 天歷史收盤價（強固防護版）
 # =========================================================
 st.markdown("---")
 st.markdown('<div class="section-header">🔍 除錯專用：櫃買指數、0050、0051 近 10 天歷史收盤價檢視</div>', unsafe_allow_html=True)
@@ -253,7 +253,7 @@ debug_tickers = {
     "0051 (0051.TW)": "0051.TW"
 }
 
-debug_dfs = []
+all_debug_data = {}
 for label, t_code in debug_tickers.items():
     try:
         t_obj = yf.Ticker(t_code)
@@ -262,16 +262,18 @@ for label, t_code in debug_tickers.items():
             if hist.index.tz is not None:
                 hist.index = hist.index.tz_localize(None)
             df_sub = hist[['Close']].tail(10).copy()
-            df_sub.columns = [label]
-            df_sub = df_sub.reset_index()
-            df_sub['Date'] = df_sub['Date'].dt.strftime('%Y-%m-%d')
-            debug_dfs.append(df_sub.set_index('Date'))
+            df_sub.index = df_sub.index.strftime('%Y-%m-%d')
+            all_debug_data[label] = df_sub['Close']
+        else:
+            all_debug_data[label] = pd.Series(dtype=float)
     except Exception:
-        pass
+        all_debug_data[label] = pd.Series(dtype=float)
 
-if debug_dfs:
-    combined_debug_df = pd.concat(debug_dfs, axis=1).sort_index(ascending=False)
-    st.dataframe(combined_debug_df, use_container_width=True)
+# 強制合併，即使某個欄位完全是空的也不會報錯或隱藏表格
+debug_combined_df = pd.DataFrame(all_debug_data)
+if not debug_combined_df.empty:
+    debug_combined_df = debug_combined_df.sort_index(ascending=False)
+    st.dataframe(debug_combined_df, use_container_width=True)
 else:
     st.warning("⚠️ 目前無法取得除錯標的的歷史資料。")
 
